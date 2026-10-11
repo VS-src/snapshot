@@ -1,5 +1,5 @@
 {
     "SnapshotAgeDays": 7,
-    "ExcludeVmPatters": ["ubu-01*"],
+    "ExcludeVmPatterns": ["exclude","ubu-01*"],
     "ExcludeSnapshotPatterns": ["donotdelete","skip"]
 }

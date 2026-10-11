@@ -39,8 +39,8 @@ Param(
 
 $config = Import-Config -Environment $Environment
 $cutoffDate = (Get-Date).AddDays(-$config.SnapshotAgeDays)
-$vmExclusionPattern = $config.ExcludeVmPatters
-$snapshotExclusionPattern = $config.ExcludeSnapshotPatterns
+$vmExclusionPatterns = @($config.ExcludeVmPatterns)
+$snapshotExclusionPatterns = @($config.ExcludeSnapshotPatterns)
 $excluded = @()
 $removed = @()
 $failed = @()
@@ -54,19 +54,18 @@ foreach ($vcenter in $Server)
     $allSnapshots = Get-VM -Server $vcConnection | Get-Snapshot | Where-Object {$_.Created -lt $cutoffDate}
     foreach ($snapshot in $allSnapshots)
     {
-        if ($snapshot.VM -like $vmExclusionPattern)
-        {
+
+        if ($vmExclusionPatterns | Where-Object { $snapshot.VM.Name -like $_}) {
             $excluded += [PSCustomObject]@{
                 VM = $snapshot.VM
                 Created = $snapshot.Created
                 SizeGB = $snapshot.SizeGB -as [int]
                 Status = 'VMnameExcluded'
             }
-            continue
+            continue 
         }
 
-        if ($snapshot.name -like $snapshotExclusionPattern )
-        {
+        if ($snapshotExclusionPatterns | Where-Object {$snapshot.Name -like $_}) {
             $excluded += [PSCustomObject]@{
                 VM = $snapshot.VM
                 Created = $snapshot.Created
