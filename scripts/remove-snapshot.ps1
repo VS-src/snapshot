@@ -37,80 +37,84 @@ Param(
 }
 
 
-function Get-EligibleSnapshot {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [PSObject[]]$Snapshot,
-
-        [Parameter(Mandatory)]
-        [datetime]$CutoffDate,
-
-        [string[]]$VmExclusionPattern = @(),
-
-        [string[]]$SnapshotExclusionPattern = @()
-    )
-
-    
-    foreach ($item in $Snapshot) {
-        $reason = $null
-
-        foreach ($pattern in $VmExclusionPattern) {
-            if ($item.VM.Name -like $pattern) {
-                $reason = "VM matches exclusion pattern: $pattern"
-                break
-            }
-        }
-
-        if (-not $reason) {
-            foreach ($pattern in $SnapshotExclusionPattern) {
-                if ($item.Name -like $pattern) {
-                    $reason = "Snapshot matches exclusion pattern: $pattern"
-                    break
-                }
-            }
-        }
-
-        if (-not $reason -and $item.Created -ge $CutoffDate) {
-            $reason = 'Snapshot is not old enough'
-        }
-
-        [PSCustomObject]@{
-            Status   = if ($reason) { 'Skipped' } else { 'Eligible' }
-            VM       = $item.VM
-            Name     = $item.Name
-            Created  = $item.Created
-            Reason   = $reason
-            Snapshot = $item
-        }
-    }
-}
-
 $config = Import-Config -Environment $Environment
 $cutoffDate = (Get-Date).AddDays(-$config.SnapshotAgeDays)
 $vmExclusionPattern = $config.ExcludeVmPatters
 $snapshotExclusionPattern = $config.ExcludeSnapshotPatterns
+$excluded = @()
+$removed = @()
+$failed = @()
 
 
-foreach ($vcenter in $Server) {
+
+
+foreach ($vcenter in $Server) 
+{
     $vcConnection = Connect-VIServer -Server $vcenter -Credential $Credential -ErrorAction Stop
+    $allSnapshots = Get-VM -Server $vcConnection | Get-Snapshot | Where-Object {$_.Created -lt $cutoffDate}
+    foreach ($snapshot in $allSnapshots)
+    {
+        if ($snapshot.VM -like $vmExclusionPattern)
+        {
+            $excluded += [PSCustomObject]@{
+                VM = $snapshot.VM
+                Created = $snapshot.Created
+                SizeGB = $snapshot.SizeGB -as [int]
+                Status = 'VMnameExcluded'
+            }
+            continue
+        }
 
-    $allSnapshots = Get-VM -Server $vcConnection | Get-Snapshot
+        if ($snapshot.name -like $snapshotExclusionPattern )
+        {
+            $excluded += [PSCustomObject]@{
+                VM = $snapshot.VM
+                Created = $snapshot.Created
+                SizeGB = $snapshot.SizeGB -as [int]
+                Status = 'SnapshotNameExcluded'
+            }
+            continue
+        }
 
-    $results = @(
-        $allSnapshots | Get-EligibleSnapshot -CutoffDate $cutoffDate -VmExclusionPattern $vmExclusionPattern -SnapshotExclusionPattern $snapshotExclusionPattern
-    )
+        try {
+            #$snapshot | Remove-Snapshot -WhatIf
+            $removed += [PSCustomObject]@{
+                VM = $snapshot.VM
+                Created = $snapshot.Created
+                SizeGB = $snapshot.SizeGB -as [int]
+                Status = 'Removed'
+           }
 
-    $eligible = @($results | Where-Object Status -eq 'Eligible')
-    $skipped  = @($results | Where-Object Status -eq 'Skipped')
-
-    $eligible | Select-Object VM, Name, Created
-    $skipped  | Select-Object VM, Name, Created, Reason
-
-    if ($eligible.Count -gt 0) {
-        $eligible.Snapshot | Remove-Snapshot -WhatIf
+        }
+        catch {
+            Write-output "$($snapshot.name) - failed to remove)"
+            $removed += [PSCustomObject]@{
+                VM = $snapshot.VM
+                Created = $snapshot.Created
+                SizeGB = $snapshot.SizeGB -as [int]
+                Status = 'Failed'
+            }
+        }
     }
-
+    
     Disconnect-VIServer -Server $vcConnection -Confirm:$false |Out-Null
 }
+
+
+if ($removed) {
+    Write-Output "Removed:"
+    $removed 
+}
+
+if ($excluded) {
+    Write-Output "Skipped:"
+    $excluded
+}
+
+if ($failed) {
+    Write-Output "Failed"
+    $failed
+}
+
+
     
