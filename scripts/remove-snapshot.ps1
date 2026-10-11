@@ -48,16 +48,24 @@ $failed = @()
 
 
 
-foreach ($vcenter in $Server) 
-{
-    $vcConnection = Connect-VIServer -Server $vcenter -Credential $Credential -ErrorAction Stop
-    $allSnapshots = Get-VM -Server $vcConnection | Get-Snapshot | Where-Object {$_.Created -lt $cutoffDate}
-    foreach ($snapshot in $allSnapshots)
-    {
+foreach ($vcenter in $Server) {
+    $vcConnection = $null
+    $allSnapshots = @()
+    try {
+        $vcConnection = Connect-VIServer -Server $vcenter -Credential $Credential -ErrorAction Stop
+        $allSnapshots = Get-VM -Server $vcConnection | Get-Snapshot | Where-Object {$_.Created -lt $cutoffDate}
+    }
+    catch {
+        Write-Output "Error while processing vcenter. $_"
+        continue
+    }
+
+    foreach ($snapshot in $allSnapshots){
 
         if ($vmExclusionPatterns | Where-Object { $snapshot.VM.Name -like $_}) {
             $excluded += [PSCustomObject]@{
-                VM = $snapshot.VM
+                VM = $snapshot.VM.Name
+                Snapshot = $snapshot.Name
                 Created = $snapshot.Created
                 SizeGB = $snapshot.SizeGB -as [int]
                 Status = 'VMnameExcluded'
@@ -67,7 +75,8 @@ foreach ($vcenter in $Server)
 
         if ($snapshotExclusionPatterns | Where-Object {$snapshot.Name -like $_}) {
             $excluded += [PSCustomObject]@{
-                VM = $snapshot.VM
+                VM = $snapshot.VM.Name
+                Snapshot = $snapshot.Name
                 Created = $snapshot.Created
                 SizeGB = $snapshot.SizeGB -as [int]
                 Status = 'SnapshotNameExcluded'
@@ -78,7 +87,8 @@ foreach ($vcenter in $Server)
         try {
             #$snapshot | Remove-Snapshot -WhatIf
             $removed += [PSCustomObject]@{
-                VM = $snapshot.VM
+                VM = $snapshot.VM.Name
+                Snapshot = $snapshot.Name
                 Created = $snapshot.Created
                 SizeGB = $snapshot.SizeGB -as [int]
                 Status = 'Removed'
@@ -87,8 +97,9 @@ foreach ($vcenter in $Server)
         }
         catch {
             Write-output "$($snapshot.name) - failed to remove)"
-            $removed += [PSCustomObject]@{
-                VM = $snapshot.VM
+            $failed += [PSCustomObject]@{
+                VM = $snapshot.VM.Name
+                Snapshot = $snapshot.Name
                 Created = $snapshot.Created
                 SizeGB = $snapshot.SizeGB -as [int]
                 Status = 'Failed'
@@ -96,7 +107,10 @@ foreach ($vcenter in $Server)
         }
     }
     
-    Disconnect-VIServer -Server $vcConnection -Confirm:$false |Out-Null
+    if ($vcConnection) {
+        Disconnect-VIServer -Server $vcConnection -Confirm:$false |Out-Null
+    }
+
 }
 
 
